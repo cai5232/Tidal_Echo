@@ -1,8 +1,9 @@
 # External memory API contract
 
-Tidal Echo does not copy or own durable memories. Its optional API loop calls an
-existing memory service before each model request and submits the completed turn
-after the reply is delivered.
+Tidal Echo does not copy or own durable memories. Its relay calls an existing
+memory service before forwarding a message to Claude Code and submits the
+completed turn after Claude Code's reply is delivered. This works without the
+optional API loop, so a Claude Pro/Max terminal can be the reply engine.
 
 The adapter is disabled by default. Set `MEMORY_ENABLED=1` only after the
 following endpoints are available.
