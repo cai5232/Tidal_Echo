@@ -68,6 +68,7 @@ VOICE_TRANSCRIBE_CMD = os.environ.get("RELAY_VOICE_TRANSCRIBE_CMD", "")
 # This path is used by the Claude Code channel too, so a separate API loop is
 # not required. The memory service remains the sole owner of durable memories.
 MEMORY_ENABLED = os.environ.get("MEMORY_ENABLED", "0").lower() in {"1", "true", "yes"}
+MEMORY_PROVIDER = os.environ.get("MEMORY_PROVIDER", "generic").strip().lower()
 MEMORY_BASE_URL = os.environ.get("MEMORY_BASE_URL", "").rstrip("/")
 MEMORY_SEARCH_PATH = os.environ.get("MEMORY_SEARCH_PATH", "/v1/memory/search")
 MEMORY_WRITE_PATH = os.environ.get("MEMORY_WRITE_PATH", "/v1/memory/ingest")
@@ -183,6 +184,20 @@ def memory_context(data) -> str:
     direct = data.get("context") or data.get("prompt")
     if isinstance(direct, str) and direct.strip():
         return direct.strip()[:6000]
+
+    # Nocturne's direct integration deliberately returns two strings rather
+    # than a generic result list.  Keep core and topic-matched memories
+    # separate so Claude receives the same useful context as the Nook bridge.
+    if MEMORY_PROVIDER == "nocturne":
+        sections = []
+        core = str(data.get("core") or "").strip()
+        related = str(data.get("related") or "").strip()
+        if core:
+            sections.append("[Core memory]\n" + core)
+        if related:
+            sections.append("[Relevant memories]\n" + related)
+        return "\n\n".join(sections)[:6000]
+
     rows = data.get("memories") or data.get("results") or data.get("items") or []
     if not isinstance(rows, list):
         return ""
@@ -241,17 +256,48 @@ def latest_human_message(session_id: str) -> dict | None:
     return rows[0] if rows else None
 
 
-async def store_external_turn(reply_text: str, session_id: str) -> None:
+def normalize_memory_kind(value) -> str:
+    kind = str(value or "memory").strip().lower()
+    return kind if kind in {"memory", "feel", "writing", "unresolved", "window"} else "memory"
+
+
+def normalize_memory_importance(value) -> int:
+    try:
+        return max(1, min(10, int(value or 5)))
+    except (TypeError, ValueError):
+        return 5
+
+
+async def store_external_turn(reply_text: str, session_id: str, metadata: dict | None = None) -> None:
     if not memory_ready() or not reply_text.strip():
         return
     human = latest_human_message(session_id)
     if not human:
         return
-    payload = {
-        "type": "conversation_turn", "user_id": MEMORY_USER_ID, "session_id": session_id,
-        "namespace": MEMORY_NAMESPACE, "source": "tidal-echo", "occurred_at": now_iso(),
-        "input": human.get("text") or "", "output": reply_text,
-    }
+    metadata = metadata or {}
+    if MEMORY_PROVIDER == "nocturne":
+        # Unlike a generic memory service, Nocturne's direct HTTP endpoint
+        # persists exactly what it receives.  Store only a deliberate compact
+        # summary supplied by Claude, never every casual conversational turn.
+        summary = str(metadata.get("memory") or "").strip()
+        if not summary:
+            return
+        content = (
+            f"长期记忆摘要：{summary}\n\n"
+            f"来源对话：\n{HUMAN_NAME}：{human.get('text') or ''}\n{AI_NAME}：{reply_text}"
+        )[:3500]
+        payload = {
+            "content": content,
+            "kind": normalize_memory_kind(metadata.get("memory_kind")),
+            "importance": normalize_memory_importance(metadata.get("memory_importance")),
+            "tags": str(metadata.get("memory_tags") or "tidal-echo,dialogue,auto")[:500],
+        }
+    else:
+        payload = {
+            "type": "conversation_turn", "user_id": MEMORY_USER_ID, "session_id": session_id,
+            "namespace": MEMORY_NAMESPACE, "source": "tidal-echo", "occurred_at": now_iso(),
+            "input": human.get("text") or "", "output": reply_text,
+        }
     try:
         await asyncio.to_thread(memory_request_sync, MEMORY_WRITE_PATH, payload)
     except Exception as exc:
@@ -552,7 +598,7 @@ async def handle_stream_delta(kind: str, body: dict) -> dict:
     await broadcast(app_subs, {"type": "typing", "active": False})
     await broadcast(app_subs, app_payload(msg))
     if base_kind == "reply":
-        asyncio.create_task(store_external_turn(text, str(msg["meta"].get("api_session") or "")))
+        asyncio.create_task(store_external_turn(text, str(msg["meta"].get("api_session") or ""), msg["meta"]))
     if base_kind == "reply" and not app_subs:
         try:
             await push_to_all(notification_from_message(msg))
@@ -807,7 +853,7 @@ async def channel_out(request: Request):
     await broadcast(app_subs, {"type": "typing", "active": False})
     await broadcast(app_subs, app_payload(msg))
     if kind == "reply":
-        asyncio.create_task(store_external_turn(text, str(meta.get("api_session") or "")))
+        asyncio.create_task(store_external_turn(text, str(meta.get("api_session") or ""), meta))
     # Unread push: only when no PWA tab is holding the stream (app_subs empty);
     # only push real replies, not 'thinking' chatter.
     if kind == "reply" and not app_subs:
