@@ -52,7 +52,8 @@ HUMAN_NAME = os.environ.get("RELAY_HUMAN_NAME", "对方")   # how the AI is told
 # --- core config / secrets (all from env) ----------------------------------
 SECRET = os.environ.get("RELAY_SECRET", "")
 DB_PATH = os.environ.get("RELAY_DB", str(Path(__file__).parent / "relay.db"))
-PORT = int(os.environ.get("RELAY_PORT", "3011"))
+# Zeabur and similar hosts inject PORT; retain RELAY_PORT for self-hosting.
+PORT = int(os.environ.get("PORT") or os.environ.get("RELAY_PORT", "3011"))
 UPLOAD_DIR = Path(os.environ.get("RELAY_UPLOAD_DIR", str(Path(__file__).parent / "uploads")))
 PUBLIC_PREFIX = os.environ.get("RELAY_PUBLIC_PREFIX", "/relay").rstrip("/")
 APP_PATH = os.environ.get("RELAY_APP_PATH", "/")  # where a push-notification tap opens the PWA
@@ -1144,4 +1145,4 @@ async def app_sessions_patch(session_id: str, request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=PORT)
+    uvicorn.run(app, host=os.environ.get("RELAY_HOST", "0.0.0.0"), port=PORT)
