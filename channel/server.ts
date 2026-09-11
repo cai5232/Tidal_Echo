@@ -136,6 +136,8 @@ const mcp = new Server(
       ``,
       `Their messages arrive as <channel source="${SOURCE}" chat_id="..." message_id="..." user="..." ts="...">. Reply with the reply tool, passing chat_id back. Use reply_to (a message_id) only when answering an earlier, specific message; for a normal reply to their latest message, omit reply_to.`,
       ``,
+      `When memory is enabled, pass the optional memory field only for a stable fact, preference, explicit "remember this" request, important relationship change, or an unfinished thread worth carrying into a future conversation. It must be a short factual summary, not a copy of the chat. Omit it for greetings, transient plans, or guesses. memory_kind may be memory, feel, writing, unresolved, or window; memory_importance is 1–10.`,
+      ``,
       `They can attach photos and files. When they do, the <channel> block carries an image_path attribute and/or the content lists local paths like "[图片] <path>" or "[文件: name] <path>". Those are real files already downloaded to THIS machine — use the Read tool on each path to actually see the photo or open the file. Always Read an attached image before replying about it; never guess its contents.`,
       ``,
       `This is a casual, personal channel — you decide what is worth sending. Short, frequent notes are fine. You are talking to ${HUMAN_NAME}, not performing for a transcript.`,
@@ -161,6 +163,25 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           reply_to: {
             type: 'string',
             description: 'message_id to thread under. Omit for a normal reply to their latest message.',
+          },
+          memory: {
+            type: 'string',
+            description: 'Optional concise durable-memory summary. Omit unless this turn is worth retaining.',
+          },
+          memory_kind: {
+            type: 'string',
+            enum: ['memory', 'feel', 'writing', 'unresolved', 'window'],
+            description: 'Kind for the optional durable-memory summary.',
+          },
+          memory_importance: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 10,
+            description: 'Importance for the optional durable-memory summary.',
+          },
+          memory_tags: {
+            type: 'string',
+            description: 'Optional comma-separated tags for the durable-memory summary.',
           },
         },
         required: ['chat_id', 'text'],
@@ -205,12 +226,18 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const chat_id = (args.chat_id as string) || CHAT_ID
         const text = args.text as string
         const reply_to = args.reply_to != null ? String(args.reply_to) : undefined
+        const memory = args.memory != null ? String(args.memory).trim() : ''
+        const memory_kind = args.memory_kind != null ? String(args.memory_kind) : undefined
+        const memory_importance = args.memory_importance != null ? Number(args.memory_importance) : undefined
+        const memory_tags = args.memory_tags != null ? String(args.memory_tags) : undefined
         if (!text) throw new Error('text is required')
         const out = await relayPost('/channel/out', {
           type: 'reply',
           chat_id,
           text,
           ...(reply_to ? { reply_to } : {}),
+          ...(memory ? { memory } : {}),
+          ...(memory ? { memory_kind, memory_importance, memory_tags } : {}),
           ts: new Date().toISOString(),
         })
         const id = out.id != null ? String(out.id) : '?'
