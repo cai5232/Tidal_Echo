@@ -1,5 +1,29 @@
 # External memory API contract
 
+## Nocturne Memory Core (recommended for this fork)
+
+This fork has a first-class `MEMORY_PROVIDER=nocturne` mode. It connects
+directly to Nocturne's existing server-to-server integration; no MCP session is
+created and Nocturne remains the sole owner of durable memory.
+
+```dotenv
+MEMORY_ENABLED=1
+MEMORY_PROVIDER=nocturne
+MEMORY_BASE_URL=http://127.0.0.1:8000
+MEMORY_SEARCH_PATH=/api/integrations/nook/recall
+MEMORY_WRITE_PATH=/api/integrations/nook/memories
+MEMORY_API_KEY=<same value as OMBRE_NOOK_API_TOKEN>
+MEMORY_LIMIT=4
+```
+
+Nocturne receives `query` and `limit` for recall and returns `core` / `related`.
+For writes, Claude Code's `reply` tool sends an optional short `memory` summary;
+only when that field is present does the relay write a Nocturne memory. This
+keeps ordinary chat from turning into permanent memory. Do not enable the
+generic API-loop memory adapter at the same time as the Claude Code channel.
+
+## Generic external-memory adapter
+
 Tidal Echo does not copy or own durable memories. Its relay calls an existing
 memory service before forwarding a message to Claude Code and submits the
 completed turn after Claude Code's reply is delivered. This works without the
